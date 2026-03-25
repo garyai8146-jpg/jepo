@@ -12,11 +12,15 @@ from googleapiclient.http import MediaIoBaseUpload
 # 設定網頁標題與佈局
 st.set_page_config(page_title="打烊清潔照上傳系統", layout="centered")
 
-# --- 初始化「分批累積」的記憶體空間 ---
+# --- 初始化「分批累積」與「上傳器重置」的記憶體空間 ---
 if 'front_cache' not in st.session_state:
     st.session_state.front_cache = {}
 if 'back_cache' not in st.session_state:
     st.session_state.back_cache = {}
+if 'front_key' not in st.session_state:
+    st.session_state.front_key = 0
+if 'back_key' not in st.session_state:
+    st.session_state.back_key = 1000
 
 # --- 系統設定與記憶功能 (API 綁定) ---
 CONFIG_FILE = "drive_config.json"
@@ -133,60 +137,77 @@ uploader_name = st.text_input("請輸入您的姓名：", placeholder="例如：
 # --- 外場上傳區 ---
 st.markdown("---")
 st.markdown("### 🧹 外場清潔照片 (需 19 張)")
-st.caption("💡 防斷線技巧：可以一次選 5~6 張，分多次點擊 Browse files 上傳，系統會自動幫您累積張數！")
+st.caption("💡 技巧：照片選完後會自動移至下方縮圖區。若要刪除，請直接點擊照片下方的「❌ 刪除」。")
 
-front_photos = st.file_uploader("點此選擇外場照片", accept_multiple_files=True, key="front", type=['png', 'jpg', 'jpeg'])
+# 透過動態 key 來達成選擇後自動清空的功能
+front_photos = st.file_uploader("點此選擇外場照片", accept_multiple_files=True, key=f"front_uploader_{st.session_state.front_key}", type=['png', 'jpg', 'jpeg'])
 
-# 將新選擇的照片存入暫存區
 if front_photos:
+    added = False
     for photo in front_photos:
         if photo.name not in st.session_state.front_cache:
             st.session_state.front_cache[photo.name] = {
                 "name": photo.name, "type": photo.type, "bytes": photo.getvalue()
             }
+            added = True
+    if added:
+        st.session_state.front_key += 1 # 改變 key，強制清空上傳框
+        st.rerun()
 
 front_count = len(st.session_state.front_cache)
 st.info(f"📊 目前已累積外場照片： **{front_count} / 19** 張")
 
-# 顯示外場縮圖與清除按鈕
+# 顯示外場縮圖與專屬刪除按鈕
 if front_count > 0:
-    if st.button("🗑️ 清空外場已選照片", key="clear_front"):
+    if st.button("🗑️ 清空外場全部照片", key="clear_front_all"):
         st.session_state.front_cache = {}
         st.rerun()
     
-    cols = st.columns(6)
-    for i, (name, photo_data) in enumerate(st.session_state.front_cache.items()):
-        with cols[i % 6]:
-            st.image(photo_data["bytes"], use_container_width=True)
+    cols = st.columns(3)
+    for i, (name, photo_data) in enumerate(list(st.session_state.front_cache.items())):
+        with cols[i % 3]:
+            # 取消滿版，強制設定寬度為 120，適合手機螢幕
+            st.image(photo_data["bytes"], width=120)
+            if st.button("❌ 刪除", key=f"del_front_{name}"):
+                del st.session_state.front_cache[name]
+                st.rerun()
 
 # --- 內場上傳區 ---
 st.markdown("---")
 st.markdown("### 🍳 內場清潔照片 (需 28 張)")
-st.caption("💡 防斷線技巧：可以一次選 5~6 張，分多次點擊 Browse files 上傳，系統會自動幫您累積張數！")
+st.caption("💡 技巧：照片選完後會自動移至下方縮圖區。若要刪除，請直接點擊照片下方的「❌ 刪除」。")
 
-back_photos = st.file_uploader("點此選擇內場照片", accept_multiple_files=True, key="back", type=['png', 'jpg', 'jpeg'])
+back_photos = st.file_uploader("點此選擇內場照片", accept_multiple_files=True, key=f"back_uploader_{st.session_state.back_key}", type=['png', 'jpg', 'jpeg'])
 
-# 將新選擇的照片存入暫存區
 if back_photos:
+    added = False
     for photo in back_photos:
         if photo.name not in st.session_state.back_cache:
             st.session_state.back_cache[photo.name] = {
                 "name": photo.name, "type": photo.type, "bytes": photo.getvalue()
             }
+            added = True
+    if added:
+        st.session_state.back_key += 1
+        st.rerun()
 
 back_count = len(st.session_state.back_cache)
 st.info(f"📊 目前已累積內場照片： **{back_count} / 28** 張")
 
-# 顯示內場縮圖與清除按鈕
+# 顯示內場縮圖與專屬刪除按鈕
 if back_count > 0:
-    if st.button("🗑️ 清空內場已選照片", key="clear_back"):
+    if st.button("🗑️ 清空內場全部照片", key="clear_back_all"):
         st.session_state.back_cache = {}
         st.rerun()
         
-    cols = st.columns(6)
-    for i, (name, photo_data) in enumerate(st.session_state.back_cache.items()):
-        with cols[i % 6]:
-            st.image(photo_data["bytes"], use_container_width=True)
+    cols = st.columns(3)
+    for i, (name, photo_data) in enumerate(list(st.session_state.back_cache.items())):
+        with cols[i % 3]:
+            # 取消滿版，強制設定寬度為 120
+            st.image(photo_data["bytes"], width=120)
+            if st.button("❌ 刪除", key=f"del_back_{name}"):
+                del st.session_state.back_cache[name]
+                st.rerun()
 
 st.markdown("---")
 
