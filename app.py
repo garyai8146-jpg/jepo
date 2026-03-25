@@ -114,6 +114,7 @@ uploader_name = st.text_input("請輸入您的姓名：", placeholder="例如：
 
 # 2. 上傳區塊
 st.markdown("### 🧹 外場清潔照片 (限定 19 張)")
+st.caption("💡 **操作提示：** 手機請在相簿中「長按」照片即可多選；電腦請按住「Ctrl」鍵或以滑鼠框選來一次選取多張。")
 front_photos = st.file_uploader(
     "請選擇 19 張外場清潔照片 (若您只負責內場，此區可留空)", 
     accept_multiple_files=True, 
@@ -122,6 +123,7 @@ front_photos = st.file_uploader(
 )
 
 st.markdown("### 🍳 內場清潔照片 (限定 28 張)")
+st.caption("💡 **操作提示：** 手機請在相簿中「長按」照片即可多選；電腦請按住「Ctrl」鍵或以滑鼠框選來一次選取多張。")
 back_photos = st.file_uploader(
     "請選擇 28 張內場清潔照片 (若您只負責外場，此區可留空)", 
     accept_multiple_files=True, 
