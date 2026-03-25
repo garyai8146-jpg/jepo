@@ -8,6 +8,7 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from google.oauth2.credentials import Credentials
 from googleapiclient.discovery import build
 from googleapiclient.http import MediaIoBaseUpload
+from PIL import Image  # ⚠️ 新增的圖片處理套件
 
 # 設定網頁標題與佈局
 st.set_page_config(page_title="打烊清潔照上傳系統", layout="centered")
@@ -47,6 +48,23 @@ def save_config(token_json_str, folder_id):
 def delete_config():
     if os.path.exists(CONFIG_FILE):
         os.remove(CONFIG_FILE)
+
+# --- 圖片壓縮核心引擎 ---
+def compress_image(uploaded_file, max_size=(800, 800)):
+    """將圖片等比例壓縮至最長邊不超過 800px (接近 480p 畫質感受)"""
+    img = Image.open(uploaded_file)
+    
+    # 若照片包含透明度通道 (例如 PNG)，強制轉為 RGB 才能存成 JPEG
+    if img.mode in ("RGBA", "P"):
+        img = img.convert("RGB")
+        
+    # thumbnail 方法會自動等比例縮小，不會讓圖片變形
+    img.thumbnail(max_size, Image.Resampling.LANCZOS)
+    
+    output = io.BytesIO()
+    # 強制轉換成 JPEG 格式，品質設定 80 (容量極小且肉眼難辨差異)
+    img.save(output, format="JPEG", quality=80)
+    return output.getvalue()
 
 # --- 進階 Google Drive API 功能 ---
 def get_drive_service(credentials_dict):
@@ -91,13 +109,11 @@ def calculate_local_md5(file_bytes):
     return md5.hexdigest()
 
 def threaded_upload_task(credentials_dict, file_bytes, filename, mimetype, parent_folder_id, existing_hashes):
-    """將 credentials 傳入子執行緒，讓每個執行緒擁有獨立的 API 連線，解決 SSL 衝突"""
     try:
         local_hash = calculate_local_md5(file_bytes)
         if local_hash in existing_hashes:
             return {"status": "skipped", "name": filename}
 
-        # ⚠️ 關鍵修正：在子執行緒中獨立建立專屬的 Google Drive 連線
         thread_service = get_drive_service(credentials_dict)
         
         file_obj = io.BytesIO(file_bytes)
@@ -141,7 +157,7 @@ uploader_name = st.text_input("請輸入您的姓名：", placeholder="例如：
 # --- 外場上傳區 ---
 st.markdown("---")
 st.markdown("### 🧹 外場清潔照片 (需 19 張)")
-st.caption("💡 技巧：照片選完後會自動移至下方縮圖區。若要刪除，請直接點擊照片下方的「❌ 刪除」。")
+st.caption("💡 技巧：照片選完後會自動移至下方縮圖區。若要刪除，請點擊照片下方的「❌ 刪除」。系統會自動壓縮畫質以加速上傳。")
 
 front_photos = st.file_uploader("點此選擇外場照片", accept_multiple_files=True, key=f"front_uploader_{st.session_state.front_key}", type=['png', 'jpg', 'jpeg'])
 
@@ -149,8 +165,12 @@ if front_photos:
     added = False
     for photo in front_photos:
         if photo.name not in st.session_state.front_cache:
+            # ⚠️ 這裡呼叫壓縮引擎，讓照片一選進來就瞬間變小
+            compressed_bytes = compress_image(photo)
             st.session_state.front_cache[photo.name] = {
-                "name": photo.name, "type": photo.type, "bytes": photo.getvalue()
+                "name": photo.name, 
+                "type": "image/jpeg", # 強制轉為 JPEG 格式
+                "bytes": compressed_bytes
             }
             added = True
     if added:
@@ -176,7 +196,7 @@ if front_count > 0:
 # --- 內場上傳區 ---
 st.markdown("---")
 st.markdown("### 🍳 內場清潔照片 (需 28 張)")
-st.caption("💡 技巧：照片選完後會自動移至下方縮圖區。若要刪除，請直接點擊照片下方的「❌ 刪除」。")
+st.caption("💡 技巧：照片選完後會自動移至下方縮圖區。若要刪除，請點擊照片下方的「❌ 刪除」。系統會自動壓縮畫質以加速上傳。")
 
 back_photos = st.file_uploader("點此選擇內場照片", accept_multiple_files=True, key=f"back_uploader_{st.session_state.back_key}", type=['png', 'jpg', 'jpeg'])
 
@@ -184,8 +204,12 @@ if back_photos:
     added = False
     for photo in back_photos:
         if photo.name not in st.session_state.back_cache:
+            # ⚠️ 同樣呼叫壓縮引擎
+            compressed_bytes = compress_image(photo)
             st.session_state.back_cache[photo.name] = {
-                "name": photo.name, "type": photo.type, "bytes": photo.getvalue()
+                "name": photo.name, 
+                "type": "image/jpeg", 
+                "bytes": compressed_bytes
             }
             added = True
     if added:
@@ -232,7 +256,6 @@ if st.button("🚀 確認上傳至雲端", type="primary", use_container_width=T
             upload_spinner = st.spinner('🔐 正在連線雲端並檢查重複照片中...')
             with upload_spinner:
                 try:
-                    # 主執行緒的連線，只用來建立資料夾與抓取 MD5
                     main_service = get_drive_service(current_config["credentials"])
                     target_parent_id = current_config["folder_id"]
                     
@@ -252,12 +275,12 @@ if st.button("🚀 確認上傳至雲端", type="primary", use_container_width=T
                             existing_hashes_front = get_existing_md5_in_folder(main_service, front_folder_id)
                             
                             for i, (name, photo_data) in enumerate(st.session_state.front_cache.items()):
-                                ext = name.split('.')[-1]
-                                new_filename = f"{date_str_file}_{uploader_name}_外場清潔_{i+1}.{ext}"
+                                # 因為壓縮後統一為 JPEG，所以強制副檔名為 jpg
+                                new_filename = f"{date_str_file}_{uploader_name}_外場清潔_{i+1}.jpg"
                                 upload_tasks.append(
                                     executor.submit(
                                         threaded_upload_task, 
-                                        current_config["credentials"], # ⚠️ 改傳入憑證，讓子執行緒自己建立連線
+                                        current_config["credentials"], 
                                         photo_data["bytes"], 
                                         new_filename, 
                                         photo_data["type"], 
@@ -273,12 +296,11 @@ if st.button("🚀 確認上傳至雲端", type="primary", use_container_width=T
                             existing_hashes_back = get_existing_md5_in_folder(main_service, back_folder_id)
                             
                             for i, (name, photo_data) in enumerate(st.session_state.back_cache.items()):
-                                ext = name.split('.')[-1]
-                                new_filename = f"{date_str_file}_{uploader_name}_內場清潔_{i+1}.{ext}"
+                                new_filename = f"{date_str_file}_{uploader_name}_內場清潔_{i+1}.jpg"
                                 upload_tasks.append(
                                     executor.submit(
                                         threaded_upload_task, 
-                                        current_config["credentials"], # ⚠️ 改傳入憑證
+                                        current_config["credentials"], 
                                         photo_data["bytes"], 
                                         new_filename, 
                                         photo_data["type"], 
