@@ -90,16 +90,20 @@ def calculate_local_md5(file_bytes):
     md5.update(file_bytes)
     return md5.hexdigest()
 
-def threaded_upload_task(service, file_bytes, filename, mimetype, parent_folder_id, existing_hashes):
+def threaded_upload_task(credentials_dict, file_bytes, filename, mimetype, parent_folder_id, existing_hashes):
+    """將 credentials 傳入子執行緒，讓每個執行緒擁有獨立的 API 連線，解決 SSL 衝突"""
     try:
         local_hash = calculate_local_md5(file_bytes)
         if local_hash in existing_hashes:
             return {"status": "skipped", "name": filename}
 
+        # ⚠️ 關鍵修正：在子執行緒中獨立建立專屬的 Google Drive 連線
+        thread_service = get_drive_service(credentials_dict)
+        
         file_obj = io.BytesIO(file_bytes)
         media = MediaIoBaseUpload(file_obj, mimetype=mimetype, resumable=True)
         file_metadata = {'name': filename, 'parents': [parent_folder_id]}
-        service.files().create(body=file_metadata, media_body=media, fields='id, name').execute()
+        thread_service.files().create(body=file_metadata, media_body=media, fields='id, name').execute()
         return {"status": "success", "name": filename}
     except Exception as e:
         return {"status": "error", "name": filename, "msg": str(e)}
@@ -139,7 +143,6 @@ st.markdown("---")
 st.markdown("### 🧹 外場清潔照片 (需 19 張)")
 st.caption("💡 技巧：照片選完後會自動移至下方縮圖區。若要刪除，請直接點擊照片下方的「❌ 刪除」。")
 
-# 透過動態 key 來達成選擇後自動清空的功能
 front_photos = st.file_uploader("點此選擇外場照片", accept_multiple_files=True, key=f"front_uploader_{st.session_state.front_key}", type=['png', 'jpg', 'jpeg'])
 
 if front_photos:
@@ -151,13 +154,12 @@ if front_photos:
             }
             added = True
     if added:
-        st.session_state.front_key += 1 # 改變 key，強制清空上傳框
+        st.session_state.front_key += 1 
         st.rerun()
 
 front_count = len(st.session_state.front_cache)
 st.info(f"📊 目前已累積外場照片： **{front_count} / 19** 張")
 
-# 顯示外場縮圖與專屬刪除按鈕
 if front_count > 0:
     if st.button("🗑️ 清空外場全部照片", key="clear_front_all"):
         st.session_state.front_cache = {}
@@ -166,7 +168,6 @@ if front_count > 0:
     cols = st.columns(3)
     for i, (name, photo_data) in enumerate(list(st.session_state.front_cache.items())):
         with cols[i % 3]:
-            # 取消滿版，強制設定寬度為 120，適合手機螢幕
             st.image(photo_data["bytes"], width=120)
             if st.button("❌ 刪除", key=f"del_front_{name}"):
                 del st.session_state.front_cache[name]
@@ -194,7 +195,6 @@ if back_photos:
 back_count = len(st.session_state.back_cache)
 st.info(f"📊 目前已累積內場照片： **{back_count} / 28** 張")
 
-# 顯示內場縮圖與專屬刪除按鈕
 if back_count > 0:
     if st.button("🗑️ 清空內場全部照片", key="clear_back_all"):
         st.session_state.back_cache = {}
@@ -203,7 +203,6 @@ if back_count > 0:
     cols = st.columns(3)
     for i, (name, photo_data) in enumerate(list(st.session_state.back_cache.items())):
         with cols[i % 3]:
-            # 取消滿版，強制設定寬度為 120
             st.image(photo_data["bytes"], width=120)
             if st.button("❌ 刪除", key=f"del_back_{name}"):
                 del st.session_state.back_cache[name]
@@ -233,7 +232,8 @@ if st.button("🚀 確認上傳至雲端", type="primary", use_container_width=T
             upload_spinner = st.spinner('🔐 正在連線雲端並檢查重複照片中...')
             with upload_spinner:
                 try:
-                    drive_service = get_drive_service(current_config["credentials"])
+                    # 主執行緒的連線，只用來建立資料夾與抓取 MD5
+                    main_service = get_drive_service(current_config["credentials"])
                     target_parent_id = current_config["folder_id"]
                     
                     now = datetime.now()
@@ -248,30 +248,42 @@ if st.button("🚀 確認上傳至雲端", type="primary", use_container_width=T
                         # 處理外場
                         if front_count == 19:
                             front_folder_name = f"{date_str_folder}外場清潔-{uploader_name}"
-                            front_folder_id = create_drive_folder(drive_service, front_folder_name, target_parent_id)
-                            existing_hashes_front = get_existing_md5_in_folder(drive_service, front_folder_id)
+                            front_folder_id = create_drive_folder(main_service, front_folder_name, target_parent_id)
+                            existing_hashes_front = get_existing_md5_in_folder(main_service, front_folder_id)
                             
                             for i, (name, photo_data) in enumerate(st.session_state.front_cache.items()):
                                 ext = name.split('.')[-1]
                                 new_filename = f"{date_str_file}_{uploader_name}_外場清潔_{i+1}.{ext}"
                                 upload_tasks.append(
                                     executor.submit(
-                                        threaded_upload_task, drive_service, photo_data["bytes"], new_filename, photo_data["type"], front_folder_id, existing_hashes_front
+                                        threaded_upload_task, 
+                                        current_config["credentials"], # ⚠️ 改傳入憑證，讓子執行緒自己建立連線
+                                        photo_data["bytes"], 
+                                        new_filename, 
+                                        photo_data["type"], 
+                                        front_folder_id, 
+                                        existing_hashes_front
                                     )
                                 )
 
                         # 處理內場
                         if back_count == 28:
                             back_folder_name = f"{date_str_folder}內場清潔-{uploader_name}"
-                            back_folder_id = create_drive_folder(drive_service, back_folder_name, target_parent_id)
-                            existing_hashes_back = get_existing_md5_in_folder(drive_service, back_folder_id)
+                            back_folder_id = create_drive_folder(main_service, back_folder_name, target_parent_id)
+                            existing_hashes_back = get_existing_md5_in_folder(main_service, back_folder_id)
                             
                             for i, (name, photo_data) in enumerate(st.session_state.back_cache.items()):
                                 ext = name.split('.')[-1]
                                 new_filename = f"{date_str_file}_{uploader_name}_內場清潔_{i+1}.{ext}"
                                 upload_tasks.append(
                                     executor.submit(
-                                        threaded_upload_task, drive_service, photo_data["bytes"], new_filename, photo_data["type"], back_folder_id, existing_hashes_back
+                                        threaded_upload_task, 
+                                        current_config["credentials"], # ⚠️ 改傳入憑證
+                                        photo_data["bytes"], 
+                                        new_filename, 
+                                        photo_data["type"], 
+                                        back_folder_id, 
+                                        existing_hashes_back
                                     )
                                 )
 
