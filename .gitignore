@@ -1,0 +1,25 @@
+# Local Google OAuth user credentials (may contain refresh tokens)
+drive_config.json
+token.json
+credentials.json
+
+# Local and Streamlit runtime state
+.env
+.env.*
+!.env.example
+.streamlit/secrets.toml
+.streamlit/credentials.toml
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+*.log
+
+# Operating system and editor
+.DS_Store
+Thumbs.db
+.vscode/
+
+# Photos or generated uploads
+uploads/
+output/
