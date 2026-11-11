@@ -24,30 +24,38 @@ if 'back_key' not in st.session_state:
     st.session_state.back_key = 1000
 
 # --- 系統設定與記憶功能 (API 綁定) ---
-CONFIG_FILE = "drive_config.json"
+# Do not persist OAuth credentials to disk on a shared Streamlit server.
+# Delete any old drive_config.json manually when upgrading.
+LEGACY_CONFIG_FILE = "drive_config.json"
+
 
 def load_config():
-    if os.path.exists(CONFIG_FILE):
-        with open(CONFIG_FILE, "r", encoding="utf-8") as f:
-            return json.load(f)
-    return None
+    config = st.session_state.get("_drive_session_config")
+    return config if isinstance(config, dict) else None
+
 
 def save_config(token_json_str, folder_id):
     try:
-        credentials_dict = json.loads(token_json_str)
-        config = {
-            "credentials": credentials_dict,
-            "folder_id": folder_id.strip()
+        credentials = json.loads(token_json_str)
+        if not isinstance(credentials, dict):
+            return False
+        if not all(credentials.get(key) for key in ("client_id", "client_secret", "refresh_token")):
+            return False
+        folder_id = folder_id.strip()
+        if not folder_id or any(char in folder_id for char in (" ", "/", "\\", "'")):
+            return False
+        st.session_state["_drive_session_config"] = {
+            "credentials": credentials,
+            "folder_id": folder_id,
         }
-        with open(CONFIG_FILE, "w", encoding="utf-8") as f:
-            json.dump(config, f)
         return True
-    except json.JSONDecodeError:
+    except (TypeError, ValueError, AttributeError):
         return False
 
+
 def delete_config():
-    if os.path.exists(CONFIG_FILE):
-        os.remove(CONFIG_FILE)
+    st.session_state.pop("_drive_session_config", None)
+
 
 # --- 圖片壓縮核心引擎 ---
 def compress_image(uploaded_file, max_size=(800, 800)):
@@ -128,24 +136,29 @@ def threaded_upload_task(credentials_dict, file_bytes, filename, mimetype, paren
 # 網頁側邊欄：API 設定區
 # ==========================================
 with st.sidebar:
-    st.header("⚙️ 系統後台設定")
+    st.header("⚙️ Google Drive 連線")
     current_config = load_config()
-    
+
     if current_config:
-        st.success("✅ Google Drive 已綁定")
-        if st.button("🗑️ 刪除 API 設定", type="primary"):
+        st.success("✅ 本次工作階段已連線")
+        if st.button("🔓 解除本次連線"):
             delete_config()
             st.rerun()
     else:
-        st.warning("⚠️ 尚未綁定 Google Drive")
-        token_json_input = st.text_area("1. 授權憑證內容")
-        folder_id_input = st.text_input("2. 「總資料夾」 ID")
-        if st.button("💾 儲存並綁定"):
-            if save_config(token_json_input, folder_id_input):
-                st.success("設定已儲存！重新整理中...")
+        st.info("請使用自己的 Google OAuth 使用者憑證，僅限可信任的本機環境。")
+        credential_file = st.file_uploader("1. 選擇 OAuth 憑證 JSON", type=["json"], key="drive_credentials_upload")
+        folder_id_input = st.text_input("2. 目標 Google Drive 資料夾 ID")
+        if st.button("連線 Google Drive"):
+            raw_json = credential_file.getvalue().decode("utf-8") if credential_file else ""
+            if save_config(raw_json, folder_id_input):
+                st.success("已連線；憑證只存在這次的瀏覽器工作階段。")
                 st.rerun()
             else:
-                st.error("JSON 格式錯誤！")
+                st.error("資料不完整：需要有效的 refresh_token、client_id、client_secret 與資料夾 ID。")
+
+    if os.path.isfile(LEGACY_CONFIG_FILE):
+        st.warning("偵測到舊版 drive_config.json，內可能含有明文權杖。新版已不讀取它，請由系統管理者從伺服器移除，必要時撤銷舊授權。")
+
 
 # ==========================================
 # 網頁主畫面：員工上傳區
