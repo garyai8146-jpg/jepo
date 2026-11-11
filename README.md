@@ -1,41 +1,30 @@
-# 打烊清潔照上傳系統｜Store Closing Photo Uploader
+# jepo｜打烊清潔照，不用再一張一張整理
 
-**[面試作品總覽｜GitHub Portfolio](https://github.com/garyai8146-jpg/Yihop_LineBOT/blob/main/PORTFOLIO.md)**
+門市打烊後要上傳不少清潔照片。照片常常分不同區域，傳錯資料夾或重複上傳都很麻煩。這個工具就是想把「選照片 → 分類 → 壓縮 → 檢查重複 → 上傳」變成比較順手的一次操作。
 
+**[回到面試作品集](https://github.com/garyai8146-jpg/Yihop_LineBOT/blob/main/PORTFOLIO.md)**
 
-> 將門市打烊後的清潔照片整理、壓縮與去重，再依工作區域批次上傳至 Google Drive 的 Streamlit 工作台。
+## 做了哪些事
 
-## 為什麼做這個專案
+- 前場與後場的照片可以分開累積，不用一次選完。
+- 使用 Pillow 壓縮圖片，降低上傳量。
+- 用檔案內容 MD5 和 Google Drive 的檢查碼比對，減少完全相同照片的重複上傳。
+- 自動尋找或建立對應 Google Drive 資料夾。
+- 透過 ThreadPoolExecutor 並行上傳，顯示成功與略過結果。
 
-門市清潔回報通常需要反覆選取多張照片、手動建立資料夾、確認照片有沒有重複上傳。這個工具把流程整合成單一畫面，讓店員專注於回報，減少整理檔案的重複操作。
+## 執行
 
-**工作流程：** 選取前場／後場照片 → 分批累積 → 圖片壓縮 → MD5 比對 → 建立或尋找 Drive 資料夾 → 並行上傳 → 顯示上傳／略過結果。
+```powershell
+python -m pip install -r requirements.txt
+streamlit run app.py
+```
 
-## 主要功能與技術決策
+使用時需要你自己授權的 Google Drive 使用者憑證與目標資料夾 ID。現有原型可能在本機 `drive_config.json` 保存 OAuth 資料，**不要上傳這個檔案，也不要把正式帳號放到公開測試環境**。
 
-- **批量圖片處理：** 使用 Pillow 等比例縮圖並輸出 JPEG，減少雲端傳輸與儲存成本。
-- **重複檔案檢查：** 比對本地圖片 MD5 與 Google Drive 回傳的 `md5Checksum`，降低重複上傳機率。
-- **並行上傳：** 使用 `ThreadPoolExecutor` 與 Google Drive API 處理多張圖片。
-- **分區與暫存：** Streamlit Session State 管理前場、後場與分批選檔。
-- **資料夾自動整理：** 查詢或建立指定父資料夾下的回報目錄。
+## 這個小工具的難點
 
-## 技術棧
+「一模一樣的檔案」和「看起來是一樣的照片」不是同一回事。MD5 只能比對檔案內容；重新拍照或重新壓縮之後，檢查碼就可能不同。
 
-Python · Streamlit · Pillow · Google Drive API v3 · Google OAuth 2.0 · concurrent.futures
+另一個問題是批次上傳的失敗回報：並行處理雖然能加快速度，但每張照片是否成功、要不要重試，都需要清楚記錄。
 
-## 本機執行
-
-1. 安裝 Python 3 與本專案相依套件。
-2. 執行 `pip install -r requirements.txt`。
-3. 執行 `streamlit run app.py`。
-4. 在應用程式介面提供自己 Google 帳戶授權產生的 OAuth 使用者憑證與目標 Drive 資料夾 ID。
-
-> **資料安全提醒：** 現有程式會在本機 `drive_config.json` 保存 OAuth 使用者憑證。此檔可能含有敏感權杖，請勿提交至 Git、分享給他人或放在公用電腦。此專案屬門市工作流程工具原型，正式多人部署前應改用安全的憑證儲存與權限管理。
-
-## 面試時可以談的工程問題
-
-如何在節省圖片儲存空間的同時保持可辨識度？Google Drive API 的延遲與多張照片上傳如何處理？如何界定「相同檔案」與「視覺相似但檔案不同」？
-
-## 限制
-
-MD5 是位元內容的重複檢查，不是圖片相似度辨識；不同壓縮或重新拍攝的照片不一定能被判定為同一張。上傳是否成功仍取決於使用者的 Google Drive 授權、配額及網路。
+這是實際流程的輔助原型，仍需要依帳號權限、Google Drive API 配額與網路環境驗證。公開程式碼不含門市的清潔照或真實憑證。
