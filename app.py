@@ -116,6 +116,15 @@ def calculate_local_md5(file_bytes):
     md5.update(file_bytes)
     return md5.hexdigest()
 
+def reserve_unique_photo(file_bytes, existing_hashes, pending_hashes):
+    """Skip an image already on Drive or already queued for the same folder."""
+    digest = calculate_local_md5(file_bytes)
+    if digest in existing_hashes or digest in pending_hashes:
+        return False
+    pending_hashes.add(digest)
+    return True
+
+
 def threaded_upload_task(credentials_dict, file_bytes, filename, mimetype, parent_folder_id, existing_hashes):
     try:
         local_hash = calculate_local_md5(file_bytes)
@@ -278,6 +287,7 @@ if st.button("🚀 確認上傳至雲端", type="primary", use_container_width=T
                     date_str_file = f"{roc_year}-{now.strftime('%m-%d')}"
 
                     upload_tasks = []
+                    skip_count = 0
                     MAX_THREADS = 5 
                     
                     with ThreadPoolExecutor(max_workers=MAX_THREADS) as executor:
@@ -286,10 +296,14 @@ if st.button("🚀 確認上傳至雲端", type="primary", use_container_width=T
                             front_folder_name = f"{date_str_folder}外場清潔-{uploader_name}"
                             front_folder_id = create_drive_folder(main_service, front_folder_name, target_parent_id)
                             existing_hashes_front = get_existing_md5_in_folder(main_service, front_folder_id)
+                            pending_front = set()
                             
                             for i, (name, photo_data) in enumerate(st.session_state.front_cache.items()):
                                 # 因為壓縮後統一為 JPEG，所以強制副檔名為 jpg
                                 new_filename = f"{date_str_file}_{uploader_name}_外場清潔_{i+1}.jpg"
+                                if not reserve_unique_photo(photo_data["bytes"], existing_hashes_front, pending_front):
+                                    skip_count += 1
+                                    continue
                                 upload_tasks.append(
                                     executor.submit(
                                         threaded_upload_task, 
@@ -307,9 +321,13 @@ if st.button("🚀 確認上傳至雲端", type="primary", use_container_width=T
                             back_folder_name = f"{date_str_folder}內場清潔-{uploader_name}"
                             back_folder_id = create_drive_folder(main_service, back_folder_name, target_parent_id)
                             existing_hashes_back = get_existing_md5_in_folder(main_service, back_folder_id)
+                            pending_back = set()
                             
                             for i, (name, photo_data) in enumerate(st.session_state.back_cache.items()):
                                 new_filename = f"{date_str_file}_{uploader_name}_內場清潔_{i+1}.jpg"
+                                if not reserve_unique_photo(photo_data["bytes"], existing_hashes_back, pending_back):
+                                    skip_count += 1
+                                    continue
                                 upload_tasks.append(
                                     executor.submit(
                                         threaded_upload_task, 
@@ -324,7 +342,6 @@ if st.button("🚀 確認上傳至雲端", type="primary", use_container_width=T
 
                         progress_bar = st.progress(0, text="開始並行上傳...")
                         success_count = 0
-                        skip_count = 0
                         total_tasks = len(upload_tasks)
                         
                         for i, future in enumerate(as_completed(upload_tasks)):
