@@ -1,5 +1,8 @@
 # 打烊清潔照上傳系統｜Store Closing Photo Uploader
 
+**[面試作品總覽｜GitHub Portfolio](https://github.com/garyai8146-jpg/Yihop_LineBOT/blob/main/PORTFOLIO.md)**
+
+
 > 將門市打烊後的清潔照片整理、壓縮與去重，再依工作區域批次上傳至 Google Drive 的 Streamlit 工作台。
 
 ## 為什麼做這個專案
